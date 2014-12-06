@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title></title>
+</head>
+<body onload="restoreFiles()">
+<div class="dropzone" id="dropzone">
+<div class="drop_label" id="drop_msg" onclick="loadFiles()">
+    Drop message and workflow files in this zone and click here
+</div>
+
+<output class="filelist" id="filelist" style="display: inline-block"></output>
+</div>
+<br>
+<div id="content">
+</div>
+
+
+<script>
+    // TODO: handle comments, color coding, can be disabled
+    // TODO: display missing nodes as a bad link
+    // TODO: display total number of states
+    // TODO: cookies for files
+    // TODO: code folding
+    // TODO: color coding by types
+    // TODO: cleanup top
+    // TODO: side bar /stack
+    // TODO: cleanup and move scripts to js
+    // TODO: bootstrapping
+
+    var wfFile, msgFile;
+    var wfContent, msgContent;
+    function handleFileSelect(evt) {
+        evt.stopPropagation();
+        evt.preventDefault();
+        var files = getWorkflowAndMessagesFiles(evt.dataTransfer.files);
+        setFiles(files);
+    }
+
+    function setFiles(files){
+
+        if(files.messages){
+            msgFile = files.messages;
+        }
+        if(files.workflow) {
+            wfFile = files.workflow;
+        }
+        // files is a FileList of File objects. List some properties.
+        var output = [];
+        if(msgFile) {
+            output.push('<br>message file : ' + msgFile.name);
+        }
+        if(wfFile) {
+            output.push('<br>workflow file: ' + wfFile.name);
+        }
+        document.getElementById('filelist').innerHTML = output.join('');
+    }
+
+    // return a dictionary with the messages and workflow files
+    function getWorkflowAndMessagesFiles(fileList)
+    {
+        var msgs = getMessagesFile(fileList);
+        var wflw = getWorkflowFile(fileList);
+        var toRtn={
+            "messages":msgs,
+            "workflow":wflw
+        };
+        return toRtn;
+    }
+
+    // find the first file in a list that is a messages file
+    function getMessagesFile(fileList){
+        for (var i = 0; i < fileList.length; i++) {
+            if(isMessagesFile(fileList[i])){
+                return fileList[i];
+            }
+        }
+    }
+
+    // find the first file in a list that is a workflow file
+    function getWorkflowFile(fileList){
+        for (var i = 0; i < fileList.length; i++) {
+            if(isWorkflowFile(fileList[i])){
+                return fileList[i];
+            }
+        }
+    }
+
+    function isMessagesFile(file) {
+        if(file.name.indexOf("Messages.") > -1){
+            return true;
+        }
+        return false;
+    }
+
+    function isWorkflowFile(file)
+    {
+        if(file.name.indexOf(".Workflow.xml") > -1){
+            return true;
+        }
+        return false;
+    }
+
+    function handleDragOver(evt) {
+        evt.stopPropagation();
+        evt.preventDefault();
+        evt.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy.
+    }
+
+    function loadFiles()
+    {
+        console.log("enter loadFiles");
+        // check for both files
+        if(wfFile === undefined)
+        {
+            alert("workflow file needed");
+            return;
+        }
+        if(msgFile === undefined)
+        {
+            alert("messages file needed");
+            return;
+        }
+        // check if they can be opened
+        loadWorkflow();
+        // parse
+        // display
+        console.log("exit loadFiles");
+    }
+
+    // TODO: all of this should be done generically in closures, but I don't grok yet.
+    // load the workflow using the reader provided and then call the passed in function
+    function loadWorkflow()
+    {
+        console.log("enter loadWorkflow");
+        var reader = new FileReader();
+        reader.onload = loadWorkflowCallback;
+        reader.readAsText(wfFile);
+        console.log("exit loadWorkflow");
+    }
+
+    function loadWorkflowCallback(e)
+    {
+        console.log("enter loadWorkflowCallBack");
+        if(e.target.result)
+        {
+            wfContent = e.target.result;
+        }
+        loadMessages();
+        console.log("exit loadWorkflowCallBack");
+
+    }
+
+    // load messages using the reader provided then call the passed in function
+    function loadMessages()
+    {
+        console.log("enter loadMessages");
+        var reader = new FileReader();
+        reader.onload = loadMessagesCallback;
+        reader.readAsText(msgFile);
+        console.log("exit loadMessages");
+    }
+
+    function loadMessagesCallback(e)
+    {
+        console.log("enter loadMessagesCallBack");
+        if(e.target.result)
+        {
+            msgContent = e.target.result;
+        }
+        showContent();
+        console.log("exit loadMessagesCallBack");
+    }
+
+    function showContent(){
+        console.log("enter showContent");
+        var parser = new DOMParser();
+        var wfDom = parser.parseFromString(wfContent,"text/xml");
+        var elements = wfDom.getElementsByTagName("statemachine")[0].childNodes;
+        var content = "";
+        for(var i = 0; i < elements.length; i++)
+        {
+            if(elements[i].nodeName == "state") {
+                var niceNode = beautifyStateNode(elements[i]);
+                content = content + niceNode;
+            }
+        }
+        //document.getElementById('content').innerText = content;
+        document.getElementById('content').innerHTML = content;
+        console.log("exit showContent");
+    }
+
+    function beautifyStateNode(node){
+        switch (node.attributes.getNamedItem("type").value) {
+            case "choice":
+                return beautifyChoiceNode(node);
+                break;
+            case "collect":
+                return beautifyCollectNode(node);
+                break;
+            case "command":
+                return beautifyCommandNode(node);
+                break;
+            case "message":
+                return beautifyMessageNode(node);
+                break;
+            case "switch":
+                return beautifySwitchNode(node);
+                break;
+            default:
+                return unknownNodeType();
+        }
+    }
+
+    function beautifyChoiceNode(node){
+        var rtn = "&ltstate id=\"" + node.attributes.getNamedItem("id").value +
+                        "\" type=\"" + node.attributes.getNamedItem("type").value +
+                        "\" key=\"" + node.attributes.getNamedItem("key").value +
+                        "\" nextstate=\"" + linkWrapNode(node.attributes.getNamedItem("nextstate").value) +
+                        "\"/&gt";
+        rtn = divWrapNode(rtn, node.attributes.getNamedItem("id").value);
+        rtn = "<br>" + rtn + "<br>";
+        return rtn;
+
+    }
+
+    function beautifyCollectNode(node){
+        var rtn = "&ltstate id=\"" + node.attributes.getNamedItem("id").value +
+                "\" type=\"" + node.attributes.getNamedItem("type").value +
+                "\" key=\"" + node.attributes.getNamedItem("key").value +
+                "\" nextstate=\"" + linkWrapNode(node.attributes.getNamedItem("nextstate").value) +
+                "\" emptystate=\"" + linkWrapNode(node.attributes.getNamedItem("emptystate").value) +
+                "\"/&gt";
+        rtn = divWrapNode(rtn, node.attributes.getNamedItem("id").value);
+        rtn = "<br>" + rtn + "<br>";
+        return rtn;
+    }
+
+    function beautifyCommandNode(node){
+        var rtn = "&ltstate id=\"" + node.attributes.getNamedItem("id").value +
+                "\" type=\"" + node.attributes.getNamedItem("type").value +
+                "\" nextstate=\"" + linkWrapNode(node.attributes.getNamedItem("nextstate").value) +
+                "\" errorstate=\"" + linkWrapNode(node.attributes.getNamedItem("errorstate").value);
+                if(node.attributes.getNamedItem("inputjumpstate") != null) {
+                    rtn = rtn + "\" inputjumpstate=\"" + linkWrapNode(node.attributes.getNamedItem("inputjumpstate").value)
+                }
+                rtn = rtn + "\"/&gt";
+                for(var i = 0; i < node.childNodes.length; i++){
+                    switch(node.childNodes[i].nodeName) {
+                        case "extension":
+                            rtn = rtn + beautifyExtensionNode(node.childNodes[i]);
+                            break;
+                        case "request":
+                            rtn = rtn + beautifyRequestNode(node.childNodes[i]);
+                            break;
+                        case "response":
+                            rtn = rtn + beautifyResponseNode(node.childNodes[i]);
+                            break;
+                    }
+                }
+        rtn = divWrapNode(rtn, node.attributes.getNamedItem("id").value);
+        rtn = "<br>" + rtn + "<br>";
+        return rtn;
+    }
+
+    function beautifyMessageNode(node){
+        // TODO: make messages do something useful
+        var rtn = "&ltstate id=\"" + node.attributes.getNamedItem("id").value +
+                "\" type=\"" + node.attributes.getNamedItem("type").value +
+                "\" nextstate=\"" + linkWrapNode(node.attributes.getNamedItem("nextstate").value) +
+                "\" message=\"" + node.attributes.getNamedItem("message").value;
+                if(node.attributes.getNamedItem("inputjumpstate") != null) {
+                    rtn = rtn + "\" inputjumpstate=\"" + linkWrapNode(node.attributes.getNamedItem("inputjumpstate").value)
+                }
+                rtn = rtn + "\"/&gt";
+        rtn = divWrapNode(rtn, node.attributes.getNamedItem("id").value);
+        rtn = "<br>" + rtn + "<br>";
+        return rtn;
+    }
+
+    function beautifySwitchNode(node){
+        var rtn = "&ltstate id=\"" + node.attributes.getNamedItem("id").value +
+                "\" type=\"" + node.attributes.getNamedItem("type").value +
+                "\" key=\"" + node.attributes.getNamedItem("key").value +
+                "\" errorstate=\"" + linkWrapNode(node.attributes.getNamedItem("errorstate").value);
+                if(node.attributes.getNamedItem("inputjumpstate") != null) {
+                    rtn = rtn + "\" inputjumpstate=\"" + linkWrapNode(node.attributes.getNamedItem("inputjumpstate").value)
+                }
+                rtn = rtn + "\"/&gt";
+        for(var i = 0; i < node.childNodes.length; i++){
+            if(node.childNodes[i].nodeName == "case") {
+                var niceNode = beautifySwitchCase(node.childNodes[i]);
+                rtn = rtn + niceNode;
+            }
+        }
+        rtn = divWrapNode(rtn, node.attributes.getNamedItem("id").value);
+        rtn = "<br>" + rtn + "<br>";
+        return rtn;
+
+    }
+
+    function beautifySwitchCase(switchCase){
+        var rtn = "&ltcase value=\"" + switchCase.attributes.getNamedItem("value").value +
+                "\" nextstate=\"" + linkWrapNode(switchCase.attributes.getNamedItem("nextstate").value) +
+                "\"/&gt";
+        return indentNode(rtn);
+    }
+
+    function beautifyExtensionNode(node) {
+        var rtn = "&ltextension&gt" + node.textContent + "&lt/extension&gt";
+        return indentNode(rtn);
+    }
+
+    function beautifyRequestNode(node) {
+        var rtn = "&ltrequest&gt";
+        for(var i = 0; i < node.childNodes.length; i++)
+        {
+            if(node.childNodes[i].nodeName == "key")
+            {
+                rtn = rtn + beautifyKeyNode(node.childNodes[i]);
+            }
+        }
+        rtn = rtn + "&lt/request&gt";
+        return indentNode(rtn);
+    }
+
+    function beautifyResponseNode(node) {
+        var rtn = "&ltresponse&gt";
+        for(var i = 0; i < node.childNodes.length; i++)
+        {
+            if(node.childNodes[i].nodeName == "key")
+            {
+                rtn = rtn + beautifyKeyNode(node.childNodes[i]);
+            }
+        }
+        rtn = rtn + "&lt/response&gt";
+        return indentNode(rtn);
+    }
+
+    function beautifyKeyNode(node){
+        var rtn = "&ltkey";
+        if(node.attributes.getNamedItem("copy-from") != null){
+            //<key copy-from="NextStageBEVID">AssignedBEVID</key>
+            rtn = rtn + " copy-from=\"" + node.attributes.getNamedItem("copy-from").value + "\"";
+
+        }
+        rtn = rtn + "&gt" + node.textContent + "&lt/key&gt";
+        return indentNode(rtn);
+    }
+
+    function indentNode(node, num){
+        var indentSpacing = 50;
+        if(num != null){
+            indentSpacing *= num;
+        }
+        return "<div style=\"margin-left: " + indentSpacing + "px\">" + node + "</div>";
+    }
+
+    function unknownNodeType(){
+        return "<br>unknown node type<br>"
+    }
+
+    function divWrapNode(node, name){
+        return "<div id=\"" + name + "\">" + node + "</div>";
+    }
+
+    function linkWrapNode(destination){ // the text and link are the same since I name a node's div the same as it's id
+        return "<a href=\"#" + destination + "\">" + destination + "</a>";
+    }
+
+    // Setup the dnd listeners.
+    var dropzone = document.getElementById('dropzone');
+    dropzone.addEventListener('dragover', handleDragOver, false);
+    dropzone.addEventListener('drop', handleFileSelect, false);
+</script>
+<style>
+    .dropzone {
+        padding: 10px;
+        border: 2px dashed #ccc;
+        width:600px;
+        min-height: 75px;
+    }
+    .filelist{
+        text-align: center;
+        font: 8pt 'Vollkorn';
+        color: #bbb;
+    }
+    .drop_label {
+        border: 1px solid  #bbb;
+        -moz-border-radius: 5px;
+        -webkit-border-radius: 5px;
+        border-radius: 5px;
+        padding: 5px;
+        text-align: center;
+        font: 14pt bold 'Vollkorn';
+        color: #bbb;
+        width:200px;
+        display: inline-block;
+    }
+    </style>
+
+
+</body>
+</html>
